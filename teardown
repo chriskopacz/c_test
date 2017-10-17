@@ -1,0 +1,14 @@
+#!/bin/bash
+
+rm *~
+rm a
+rm b
+rm c
+rm d
+rm e
+rm f
+rm g
+rm h
+rm i
+rm j
+rm k
