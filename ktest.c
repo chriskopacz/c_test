@@ -158,17 +158,30 @@ int main()
     //0 -> user input guess
     if(TURN%2==0)
     {
-      printf("Input your guess: r c\n>>> ");
-      scanf("%d %d",&my_r_guess,&my_c_guess); //take input from user
-      //sprintf(my_guess,"%d %d",&my_r_guess,&my_c_guess);
-      //send guess to opponent
-      //receive hit/miss from opponent
-        //update OPP_HEALTH
-      //update integer grid with guess (is this needed?)
-      //update char grid with guess
-      change_char_element(my_guesses_ch[my_r_guess],my_c_guess,'o');
-      //^^this will need to be put in an if statement depending on hit/miss
+      int temp_guess=-1;
+      while(temp_guess==-1)
+      {
+        printf("Input your guess: r c\n>>> ");
+        scanf("%d %d",&my_r_guess,&my_c_guess); //take input from user
 
+        //check my_grid to see that this r,c hasnt been previously guessed
+        if(my_grid[my_r_guess][my_c_guess]==1)
+        {//if it has been guessed, print a message
+          printf("Already guessed. Go again.\n");
+        }else
+        {//if it hasnt been guessed
+          //update my_grid
+          change_int_element(my_grid[my_r_guess],my_c_guess);
+          //update char grid with guess
+          change_char_element(my_guesses_ch[my_r_guess],my_c_guess,'o');
+          //^^this will need to be put in an if statement depending on hit/miss
+          temp_guess = 0; //change temp_guess
+        }
+        //sprintf(my_guess,"%d %d",&my_r_guess,&my_c_guess);
+        //send guess to opponent
+        //receive hit/miss from opponent
+          //update OPP_HEALTH
+      }
       sprintf(my_guess,"%d.%d.%d",my_r_guess,my_c_guess,opp_guess_out);
     }else //1 -> computer guess
     {
