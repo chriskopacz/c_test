@@ -1,19 +1,25 @@
-//next iteration from itest.c
+//continuation of ktest.c
 /*
-read in a guesses from user -> save them in a string (which would then be
-sent to the opponents game for checking)
-also update a grid of my guesses or print a list of my guesses (?)
-*/
-/*
-after reading the user guess, randomly generate an "opponent's" guess
-via computer's rng - then check that guess against your board, register a
-hit or miss (to be sent to opponent),  then ready for next guess input
+implement communication between two computers for play between people instead
+of generating random guesses from the computer
 */
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <math.h>
+//from chat implementation
+#include <unistd.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+
+//from chat
+#define PORT "4950"    // the port users will be connecting to
+#define MAXBUFLEN 100
 
 #define NUM_ROW 10
 #define ROW_LEN 10
@@ -25,7 +31,7 @@ char SHIP_LET[18];
 int PTR_OCC=0;
 int MY_HEALTH=17;
 int OPP_HEALTH = 17;
-int TURN = 0;
+//int TURN = 0;
 
 struct Ships
 {
@@ -37,6 +43,14 @@ struct Ships
   int placed;
   char letter;
 }ship;
+
+//chat implementation
+// get sockaddr, IPv4 or IPv6:
+void *get_in_addr(struct sockaddr *sa);
+void me_listen(char *rec);
+int me_talk(char *addr,int my_r,int my_c);
+int me_receive_response();
+void me_send_response(char *addr,int opp_out);
 
 void print_ship(struct Ships* ship);
 void ship_hit(struct Ships *ship);
@@ -54,7 +68,7 @@ int check_opp_guess(int *r,int c);
 void find_hit(struct Ships *a,struct Ships *b,struct Ships *c,struct Ships *d,
   struct Ships *e,int row, int col);
 
-int main()
+int main(int argc, char *argv[])
 {
   srand(time(NULL)); //make more random!
   //variables and such
@@ -71,6 +85,10 @@ int main()
   int my_r_guess, my_c_guess;
   char rec_buf[12];
   int rec_r,rec_c,prev_guess;
+
+  //set TURN to equal argv[2]
+  int TURN = atoi(argv[2]);
+
   //initialize matrixes
   for(i=0;i<NUM_ROW;i++)
   {
@@ -161,58 +179,74 @@ int main()
       int temp_guess=-1;
       while(temp_guess==-1)
       {
+
+        //pass my_r_guess, my_c_guess to me_talk()
         printf("Input your guess: r c\n>>> ");
         scanf("%d %d",&my_r_guess,&my_c_guess); //take input from user
 
+
         //check my_grid to see that this r,c hasnt been previously guessed
-        if(my_grid[my_r_guess][my_c_guess]==1)
+        if(my_guesses[my_r_guess][my_c_guess]==1)
         {//if it has been guessed, print a message
           printf("Already guessed. Go again.\n");
         }else
-        {//if it hasnt been guessed
+        {//if it hasnt been guessed already
           //update my_grid
-          change_int_element(my_grid[my_r_guess],my_c_guess);
-          //update char grid with guess
-          change_char_element(my_guesses_ch[my_r_guess],my_c_guess,'o');
-          //^^this will need to be put in an if statement depending on hit/miss
+          change_int_element(my_guesses[my_r_guess],my_c_guess);
           temp_guess = 0; //change temp_guess
         }
-        //sprintf(my_guess,"%d %d",&my_r_guess,&my_c_guess);
-        //send guess to opponent
-        //receive hit/miss from opponent
-          //update OPP_HEALTH
       }
-      sprintf(my_guess,"%d.%d.%d",my_r_guess,my_c_guess,opp_guess_out);
-    }else //1 -> computer guess
+      //send guess to opponent
+      me_talk(argv[1],my_r_guess,my_c_guess);
+
+      //receive response
+      prev_guess = me_receive_response();
+
+      //update my_guesses_ch
+      if(prev_guess==1)
+      {//previous guess was a hit
+        change_char_element(my_guesses_ch[my_r_guess],my_c_guess,'X');
+        OPP_HEALTH = OPP_HEALTH - 1;
+      }else if(prev_guess==0)
+      {//previous guess was a miss
+        change_char_element(my_guesses_ch[my_r_guess],my_c_guess,'o');
+      }else
+      {//previous guess was an unknown
+        change_char_element(my_guesses_ch[my_r_guess],my_c_guess,'B');
+      }
+    }else //1 -> opponent guess
     {
-      //generate random guess from computer
-      //(in future this needs to be received from opponent)
-      //rand()%(max + 1 - min) + min
-      opp_row = rand()%(9+1-0)+0;
-      opp_col = rand()%(9+1-0)+0;
+      //receive guess from opponent
+      me_listen(rec_buf);
 
+      //read opponent guess from a string received over sockets
+      sscanf(rec_buf,"%d.%d",&rec_r,&rec_c);
 
-      //simulate reading opponent guess from a string received over sockets
-      sprintf(rec_buf,"%d.%d.%d",opp_row,opp_col,opp_guess_out);
-      sscanf(rec_buf,"%d.%d.%d",&rec_r,&rec_c,&prev_guess);
-
-
-      //check opponent guess
+      //check opponent guess for hit/miss against my ships (my_grid)
       opp_guess_out = check_opp_guess(my_grid[rec_r],rec_c);
+
+      //update my_grid_ch
       if(opp_guess_out==1)
       {
         MY_HEALTH = MY_HEALTH - 1;
-        find_hit(&car,&bat,&cru,&sub,&des,opp_row,opp_col);
-        change_char_element(my_grid_ch[opp_row],opp_col,'x');
+        find_hit(&car,&bat,&cru,&sub,&des,rec_r,rec_c);
+        change_char_element(my_grid_ch[rec_r],rec_c,'x');
       }else
       {
-        change_char_element(my_grid_ch[opp_row],opp_col,'o');
+        change_char_element(my_grid_ch[rec_r],rec_c,'o');
       }
+
+      //send hit/miss response back to opponent
+      me_send_response(argv[1],opp_guess_out);
     }
 
     //clear console and print updated character grid
     system("clear");
-    printf("sent to opponent: %s\n",my_guess);
+    /*if(TURN%2==0)
+    {
+      printf("sent to opponent: (%d,%d)\n",my_r_guess,my_c_guess);
+    }
+    */
 
     //print updated character grid -> my ships
     printf("MY SHIPS:\n");
@@ -537,7 +571,8 @@ int check_opp_guess(int *r, int c)
   }
 }
 //=====
-void find_hit(struct Ships *a, struct Ships *b,struct Ships *c,struct Ships *d,struct Ships *e,int row, int col)
+void find_hit(struct Ships *a, struct Ships *b,struct Ships *c,struct Ships *d,
+  struct Ships *e,int row, int col)
 {
   int i;
 
@@ -585,4 +620,286 @@ void find_hit(struct Ships *a, struct Ships *b,struct Ships *c,struct Ships *d,s
       ship_hit(e);
     }
   }
+}
+//============
+//chat implementation functions
+//=====
+void *get_in_addr(struct sockaddr *sa)
+{
+  if (sa->sa_family == AF_INET)
+  {
+    return &(((struct sockaddr_in*)sa)->sin_addr);
+  }
+
+  return &(((struct sockaddr_in6*)sa)->sin6_addr);
+}
+//=====
+void me_listen(char *rec)
+{
+  int sockfd;
+  struct addrinfo hints, *servinfo, *p;
+  int rv;
+  int numbytes;
+  struct sockaddr_storage their_addr;
+  char buf[MAXBUFLEN];
+  socklen_t addr_len;
+  char s[INET6_ADDRSTRLEN];
+  int bind_d;
+
+
+  memset(&hints, 0, sizeof hints);
+  hints.ai_family = AF_UNSPEC; // set to AF_INET to force IPv4
+  hints.ai_socktype = SOCK_DGRAM;
+  hints.ai_flags = AI_PASSIVE; // use my IP
+
+  rv = getaddrinfo(NULL,PORT,&hints,&servinfo);
+  if(rv != 0)
+  {
+    fprintf(stderr, "getaddrinfo listen: %s\n", gai_strerror(rv));
+  }
+
+  // loop through all the results and bind to the first we can
+  for(p = servinfo; p != NULL; p = p->ai_next)
+  {
+    sockfd = socket(p->ai_family,p->ai_socktype,p->ai_protocol);
+    if(sockfd == -1)
+    {
+      perror("listener: socket");
+      continue;
+    }
+
+    bind_d = bind(sockfd,p->ai_addr,p->ai_addrlen);
+    if(bind_d == -1)
+    {
+      close(sockfd);
+      perror("listener: bind");
+      continue;
+    }
+
+    break;
+  }
+
+  if(p == NULL)
+  {
+    fprintf(stderr, "listener: failed to bind socket\n");
+  }
+
+  freeaddrinfo(servinfo);
+
+  printf("waiting...\n");
+
+  addr_len = sizeof their_addr;
+
+  //receive message
+  numbytes = recvfrom(sockfd,buf,MAXBUFLEN-1,0,(struct sockaddr *)&their_addr,
+                      &addr_len);
+  if(numbytes == -1)
+  {
+    perror("recvfrom");
+    exit(1);
+  }
+
+  //append null terminator to end of received message
+  buf[numbytes] = '\0';
+
+  //copy the received message into a string pointer that main() has
+  strncpy(rec,buf,numbytes+1);
+
+  close(sockfd);
+}
+//=====
+int me_talk(char *addr,int my_r,int my_c)
+{
+    int sockfd;
+    struct addrinfo hints, *servinfo, *p;
+    int rv;
+    int numbytes;
+
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+
+    rv = getaddrinfo(addr,PORT,&hints,&servinfo);
+    if (rv != 0)
+    {
+      fprintf(stderr, "getaddrinfo talk: %s\n", gai_strerror(rv));
+      return 1;
+    }
+
+    // loop through all the results and make a socket
+    for(p = servinfo; p != NULL; p = p->ai_next)
+    {
+      sockfd = socket(p->ai_family,p->ai_socktype,p->ai_protocol);
+      if (sockfd == -1)
+      {
+        perror("talker: socket");
+        continue;
+      }
+
+      break;
+    }
+
+    if (p == NULL) {
+        fprintf(stderr, "talker: failed to create socket\n");
+        return 2;
+    }
+
+    int talk_len = 12;
+    char talk_buff[talk_len];
+    //format guess into a string
+    sprintf(talk_buff,"%d.%d",my_r,my_c);
+
+    //send string to opponent
+    numbytes = sendto(sockfd,talk_buff,talk_len,0,p->ai_addr,p->ai_addrlen);
+
+    if(numbytes == -1)
+    {
+      perror("talker: sendto");
+      exit(1);
+    }
+
+    freeaddrinfo(servinfo);
+
+    //printf("talker: sent %d bytes to %s\n", numbytes, addr);
+    close(sockfd);
+
+    return 0;
+}
+//=====
+int me_receive_response()
+{
+  int sockfd;
+  struct addrinfo hints, *servinfo, *p;
+  int rv;
+  int numbytes;
+  struct sockaddr_storage their_addr;
+  char buf[MAXBUFLEN];
+  socklen_t addr_len;
+  char s[INET6_ADDRSTRLEN];
+  int bind_d;
+
+
+  memset(&hints, 0, sizeof hints);
+  hints.ai_family = AF_UNSPEC; // set to AF_INET to force IPv4
+  hints.ai_socktype = SOCK_DGRAM;
+  hints.ai_flags = AI_PASSIVE; // use my IP
+
+  rv = getaddrinfo(NULL,PORT,&hints,&servinfo);
+  if(rv != 0)
+  {
+    fprintf(stderr, "getaddrinfo listen: %s\n", gai_strerror(rv));
+  }
+
+  // loop through all the results and bind to the first we can
+  for(p = servinfo; p != NULL; p = p->ai_next)
+  {
+    sockfd = socket(p->ai_family,p->ai_socktype,p->ai_protocol);
+    if(sockfd == -1)
+    {
+      perror("listener: socket");
+      continue;
+    }
+
+    bind_d = bind(sockfd,p->ai_addr,p->ai_addrlen);
+    if(bind_d == -1)
+    {
+      close(sockfd);
+      perror("listener: bind");
+      continue;
+    }
+
+    break;
+  }
+
+  if(p == NULL)
+  {
+    fprintf(stderr, "listener: failed to bind socket\n");
+  }
+
+  freeaddrinfo(servinfo);
+
+  printf("waiting...\n");
+
+  addr_len = sizeof their_addr;
+
+  //receive message
+  numbytes = recvfrom(sockfd,buf,MAXBUFLEN-1,0,(struct sockaddr *)&their_addr,
+                      &addr_len);
+  if(numbytes == -1)
+  {
+    perror("recvfrom");
+    exit(1);
+  }
+
+  //append null terminator to end of received message
+  buf[numbytes] = '\0';
+
+  //copy the received message into a string pointer that main() has
+  //strncpy(rec,buf,numbytes+1);
+
+  //guet integer from response
+  int guess_out=-1;
+  sscanf(buf,"%d",&guess_out);
+
+  close(sockfd);
+
+  //return the outcome of your guess
+  return guess_out;
+}
+//=====
+void me_send_response(char *addr,int opp_out)
+{
+    int sockfd;
+    struct addrinfo hints, *servinfo, *p;
+    int rv;
+    int numbytes;
+
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+
+    rv = getaddrinfo(addr,PORT,&hints,&servinfo);
+    if (rv != 0)
+    {
+      fprintf(stderr, "getaddrinfo talk: %s\n", gai_strerror(rv));
+      //return 1;
+    }
+
+    // loop through all the results and make a socket
+    for(p = servinfo; p != NULL; p = p->ai_next)
+    {
+      sockfd = socket(p->ai_family,p->ai_socktype,p->ai_protocol);
+      if (sockfd == -1)
+      {
+        perror("talker: socket");
+        continue;
+      }
+
+      break;
+    }
+
+    if (p == NULL) {
+        fprintf(stderr, "talker: failed to create socket\n");
+        //return 2;
+    }
+
+    int talk_len = 12;
+    char talk_buff[talk_len];
+    //format guess into a string
+    sprintf(talk_buff,"%d",opp_out);
+
+    //send string to opponent
+    numbytes = sendto(sockfd,talk_buff,talk_len,0,p->ai_addr,p->ai_addrlen);
+
+    if(numbytes == -1)
+    {
+      perror("talker: sendto");
+      exit(1);
+    }
+
+    freeaddrinfo(servinfo);
+
+    close(sockfd);
+
+    //return 0;
 }
